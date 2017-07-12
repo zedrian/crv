@@ -21,7 +21,6 @@ class Database:
         self.compounds = []
 
         database_file_name = join(self.folder_name, 'database.json')
-        can_load_from_json = None
 
         old_json_data = None
         if isfile(database_file_name):
@@ -39,7 +38,7 @@ class Database:
                 print('Current SHA-512 digest differs from stored in database. Re-initializing.')
                 can_load_from_json = False
             else:
-                print('SHA-512 digest is actual. Loading.')
+                print('SHA-512 digest is actual. Can load database from cached file.')
                 can_load_from_json = True
 
             self.digest = new_digest
@@ -65,6 +64,19 @@ class Database:
     def load(self, json_data):
         digest = json_data.get('SHA-512')
         self.digest = digest
+
+        compound_dictionaries = json_data.get('Compounds')
+
+        progress_label = 'Loading compounds: '
+        show_progress(progress_label, 0.0)
+        compound_index = 0
+
+        for compound in compound_dictionaries:
+            self.compounds.append(Compound.from_dictionary(compound))
+
+            compound_index += 1
+            show_progress(progress_label, float(compound_index) / float(len(compound_dictionaries)))
+        print('Database successfully loaded ({0} compounds).'.format(len(self.compounds)))
 
     def save(self):
         json_data = dict()

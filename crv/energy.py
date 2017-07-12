@@ -1,3 +1,6 @@
+from crv.fragment import Fragment
+
+
 class Energy:
     def __init__(self, name: str, fragments: list):
         self.name = name
@@ -11,6 +14,16 @@ class Energy:
         for fragment in self.fragments:
             dictionary['Fragments'].append(fragment.get_dictionary())
         return dictionary
+
+    # Needed for JSON deserialization
+    @classmethod
+    def from_dictionary(cls, dictionary: dict):
+        name = dictionary.get('Name')
+        fragment_dictionaries = dictionary.get('Fragments')
+        fragments = []
+        for fragment in fragment_dictionaries:
+            fragments.append(Fragment.from_dictionary(fragment))
+        return Energy(name, fragments)
 
     def __str__(self):
         return 'Name: {0}\n'.format(self.name) + \

@@ -12,6 +12,14 @@ class Fragment:
         dictionary['SMILES'] = self.smiles
         return dictionary
 
+    # Needed for JSON deserialization.
+    @classmethod
+    def from_dictionary(cls, dictionary: dict):
+        mass = dictionary.get('Mass')
+        intensity = dictionary.get('Intensity')
+        smiles = dictionary.get('SMILES')
+        return Fragment(mass, intensity, smiles)
+
     def __str__(self):
         return 'Fragment(mass={0}, intensity={1}, SMILES=\'{2}\')'.format(self.mass, self.intensity, self.smiles)
 
