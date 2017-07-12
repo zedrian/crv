@@ -2,9 +2,9 @@ from datetime import datetime
 from os import makedirs
 from os.path import isfile, join
 from sys import argv
-from xml.etree.ElementTree import parse
 
 from crv.compound import Compound
+from crv.database import Database
 from crv.energy import Energy
 from crv.fragment import Fragment
 from crv.parameters import Parameters, generate_default_parameters_file
@@ -179,19 +179,6 @@ def construct_database(parameters: Parameters, session_folder_name: str) -> list
     write_training_list(compounds, training_list_file_name)
 
 
-# Constructs compounds list and all needed files from experimental folder.
-# Returns list of compounds.
-def parse_experimental_data(parameters: Parameters, session_folder_name: str):
-    mzdata_file_name = join(parameters.experimental_data_folder_name, parameters.experimental_mzdata_file_name)
-    if not isfile(mzdata_file_name):
-        print('Failed to parse \'{0}\': file not exists.'.format(mzdata_file_name))
-        exit()
-
-    xml_tree = parse(mzdata_file_name)
-    xml_root = xml_tree.getroot()
-    # continue here
-
-
 if __name__ == '__main__':
     parameters = None
     if len(argv) == 1:
@@ -209,5 +196,5 @@ if __name__ == '__main__':
 
     session_folder_name = generate_session_folder()
 
-    database_compounds = construct_database(parameters, session_folder_name)
-    experimental_compounds = parse_experimental_data(parameters, session_folder_name)
+    database = Database(parameters)
+    database.save()
