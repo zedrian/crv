@@ -194,7 +194,7 @@ if __name__ == '__main__':
     print(parameters)
     print('')
 
-    session_folder_name = generate_session_folder()
+    # session_folder_name = generate_session_folder()
 
     database = Database(parameters)
     database.save()

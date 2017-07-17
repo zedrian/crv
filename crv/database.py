@@ -6,6 +6,7 @@ from os.path import isfile, join
 from crv.compound import Compound
 from crv.energy import Energy
 from crv.fragment import Fragment
+from crv.fragment_match import FragmentMatch
 from crv.parameters import Parameters
 from crv.utility import show_progress
 
@@ -19,6 +20,7 @@ class Database:
         self.folder_name = join(root_folder, parameters.database_name)
         self.digest = None
         self.compounds = []
+        self.fragment_matches = []
 
         database_file_name = join(self.folder_name, 'database.json')
 
@@ -61,9 +63,13 @@ class Database:
         check_missing_compound_files(self.compounds, self.folder_name)
         load_compound_energies(self.compounds, self.folder_name, parameters.minimal_intensity)
 
+        self.fragment_matches = compute_fragment_matches(self.compounds)
+
     def load(self, json_data):
         digest = json_data.get('SHA-512')
         self.digest = digest
+
+        # process compounds
 
         compound_dictionaries = json_data.get('Compounds')
 
@@ -76,7 +82,23 @@ class Database:
 
             compound_index += 1
             show_progress(progress_label, float(compound_index) / float(len(compound_dictionaries)))
-        print('Database successfully loaded ({0} compounds).'.format(len(self.compounds)))
+
+        # process fragment matches
+
+        fragment_match_dictionaries = json_data.get('Fragment matches')
+
+        progress_label = 'Loading fragment matches: '
+        show_progress(progress_label, 0.0)
+        match_index = 0
+
+        for match in fragment_match_dictionaries:
+            self.fragment_matches.append(FragmentMatch.from_dictionary(match))
+
+            match_index += 1
+            show_progress(progress_label, float(match_index) / float(len(fragment_match_dictionaries)))
+
+        print('Database successfully loaded ({0} compounds, {1} fragments).'.format(len(self.compounds),
+                                                                                    len(self.fragment_matches)))
 
     def save(self):
         json_data = dict()
@@ -85,6 +107,10 @@ class Database:
         json_data['Compounds'] = []
         for compound in self.compounds:
             json_data['Compounds'].append(compound.get_dictionary())
+
+        json_data['Fragment matches'] = []
+        for match in self.fragment_matches:
+            json_data['Fragment matches'].append(match.get_dictionary())
 
         json_string = dumps(json_data, indent=2)
         file = open(join(self.folder_name, 'database.json'), 'w')
@@ -179,3 +205,45 @@ def load_compound_energies(compounds: list, folder_name: str, minimal_intensity:
 
         compound_index += 1
         show_progress(progress_label, float(compound_index) / float(len(compounds)))
+
+
+# Creates list of FragmentMatch objects describing lists of compounds that contain each fragment.
+# Returns such list sorted by frequency (unique fragments first).
+def compute_fragment_matches(compounds: list) -> list:
+    matches = []
+
+    progress_label = 'Computing fragment matches: '
+    show_progress(progress_label, 0.0)
+
+    compound_index = 0
+    for compound in compounds:
+        # we don't want to process multiple times the same fragment from different energies
+        processed_fragment_smiles = []
+        for energy in compound.energies:
+            for fragment in energy.fragments:
+                if fragment.smiles in processed_fragment_smiles:
+                    continue
+
+                # try to find existing match with such fragment
+                match_found = False
+                for match in matches:
+                    if match.fragment_smiles == fragment.smiles:
+                        # match found, store compound
+                        match.compound_names.append(compound.name)
+                        match_found = True
+                        break
+
+                if not match_found:
+                    # create new match
+                    match = FragmentMatch(fragment.smiles, [compound.name])
+                    matches.append(match)
+
+                processed_fragment_smiles.append(fragment.smiles)
+
+        compound_index += 1
+        show_progress(progress_label, float(compound_index) / float(len(compounds)))
+
+    # sort matches (unique fragments first)
+    matches.sort(key=lambda x: len(x.compound_names))
+
+    return matches
