@@ -52,6 +52,8 @@ class Database:
             self.load(old_json_data)
         else:
             self.initialize(parameters)
+            self.save()
+
 
     def initialize(self, parameters: Parameters):
         self.digest = compute_digest(self.folder_name)
@@ -116,6 +118,8 @@ class Database:
         file = open(join(self.folder_name, 'database.json'), 'w')
         file.write(json_string)
         file.close()
+
+        print('Database successfully saved.')
 
 
 # Loads compound names and SMILES from file and returns list of compounds.

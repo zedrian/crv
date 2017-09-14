@@ -13,9 +13,10 @@ from crv.utility import show_progress
 
 def show_usage():
     script_file_name = argv[0].split('/')[-1]
-    print('Usage: {0} parameters_json_file'.format(script_file_name))
+    print('Usage: {0} parameters_json_file [mode]'.format(script_file_name))
     print('If parameters_json_file is not presented, CRV automatically generates \'parameters.json\' with default '
           'values.')
+    print('If mode is not presented, CRV shows list of available modes and user should choose one among them or exit.')
     print('')
 
 
@@ -180,21 +181,32 @@ def construct_database(parameters: Parameters, session_folder_name: str) -> list
 
 
 if __name__ == '__main__':
+    available_modes = ['experiment', 'statistics', 'train']
     parameters = None
+    mode = None
     if len(argv) == 1:
         # if script is running without parameters, show usage and generate file with default values
         show_usage()
         generate_default_parameters_file()
-        # parameters = Parameters()  # or I should exit?
         exit()
     else:
         parameters = Parameters.from_json_file(argv[1])
+        if len(argv) > 2:
+            mode = argv[2]          
+            if not mode in available_modes:
+                print('Mode is not supported: {0}.'.format(mode))
+            else:
+                print('Mode: {0}'.format(mode))
+        else:
+            print('No mode provided from command line.')
+    if not mode in available_modes:
+        print('Select mode:')
+    
 
-    print('Current parameters:')
-    print(parameters)
-    print('')
+    # print('Current parameters:')
+    # print(parameters)
+    # print('')
 
     # session_folder_name = generate_session_folder()
 
     database = Database(parameters)
-    database.save()
