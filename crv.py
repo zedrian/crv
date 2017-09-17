@@ -7,7 +7,7 @@ from base64 import standard_b64decode
 from struct import unpack
 from collections import namedtuple
 import subprocess
-from sys import stdout, argv
+from sys import stdout
 
 
 # smart progress bar
@@ -45,10 +45,7 @@ def select_database(root_folder):
         print('{0}. {1}'.format(index, name))
         index += 1
 
-    if len(argv) > 1:
-        index = 1
-    else:
-        index = int(input('Select database: '))
+    index = int(input('Select database: '))
 
     file_name = join(root_folder, database_names[index - 1], 'compounds-list.txt')
     if not isfile(file_name):
@@ -59,17 +56,13 @@ def select_database(root_folder):
 
 
 def get_compounds_list_file_name(database_folder_name):
-    if len(argv) > 1:
-        file_name = ''
-    else:
-        file_name = input(
-            'Enter compounds list file name (or press ENTER to use default compounds-list.txt from database): ')
+    file_name = input('Enter compounds list file name (or press ENTER to use default compounds-list.txt from database): ')
     if file_name == '':
         file_name = join(database_folder_name, 'compounds-list.txt')
     return file_name
 
 
-def construct_database(minimal_intensity: float = 0.0):
+def construct_database(strain_name: str, minimal_intensity: float = 0.0):
     database_root_folder = 'databases'
     database_name = select_database(database_root_folder)
 
@@ -92,8 +85,8 @@ def construct_database(minimal_intensity: float = 0.0):
 
     session_root_folder = 'sessions'
     time = datetime.now()
-    session_name = '{0}-{1}-{2}_{3}-{4}-{5}__{6}__{7}'.format(time.year, time.month, time.day, time.hour, time.minute,
-                                                    time.second, group_name, strain_name)
+    session_name = '{0}-{1}-{2}_{3}-{4}-{5}__{6}'.format(time.year, time.month, time.day, time.hour, time.minute,
+                                                    time.second, strain_name)
     session_folder_name = join(session_root_folder, session_name)
     makedirs(session_folder_name)
 
@@ -668,172 +661,164 @@ def remove_wrong_lines_from_file(all_compounds_file_name: str):
         file.write(line)
     file.close()
 
-if __name__ == '__main__':
-    import gc
-    # group_name = '2017_04_06'
-    group_name = '2017_05_19'
-    # strain_names = ['_15', '17_max', '17_min', '18', '55' '162', '255', 'chloroform']
-    # strain_names = ['_2', '_15', '_17min', '_17n', '_18', '_55', '_162', '_255']
-    strain_names = ['_162', '_255']
+def main():
+    data_folder_name = input('Enter data folder name: ')
+    strain_name = data_folder_name.replace('\\', '/').split('/')[-1].replace(' ', '-')
 
-    for strain_name in strain_names:
-        session_folder_name, candidates_list, candidates_file_name = construct_database(0.0001)
+    session_folder_name, candidates_list, candidates_file_name = construct_database(strain_name, 0.0001)
 
-        if len(argv) > 1:
-            # data_folder_name = join('D:\\work\\development\\crv\\experimental\\2017_04_06_results\\results', strain_name)
-            data_folder_name = join('D:\\work\\development\\crv\\experimental\\2017_05_19_results\\2017_05_19_results', strain_name)
-        else:
-            data_folder_name = input('Enter data folder name: ')
+    sample_folder_names = [f for f in listdir(data_folder_name) if isdir(join(data_folder_name, f))]
+    print('Folders with sample data found:')
+    for name in sample_folder_names:
+        print('- {0}'.format(name))
 
-        sample_folder_names = [f for f in listdir(data_folder_name) if isdir(join(data_folder_name, f))]
-        print('Folders with sample data found:')
-        for name in sample_folder_names:
-            print('- {0}'.format(name))
+    sample_records = []
 
-        sample_records = []
+    makedirs(join(session_folder_name, 'results'))
+    for sample_folder_name in sample_folder_names:
+        sample_record = {}
+        sample_record['name'] = sample_folder_name
 
-        makedirs(join(session_folder_name, 'results'))
-        for sample_folder_name in sample_folder_names:
-            sample_record = {}
-            sample_record['name'] = sample_folder_name
+        print('Processing sample: {0}'.format(sample_folder_name))
+        current_sample_data_folder_name = join(data_folder_name, sample_folder_name)
+        current_sample_session_folder_name = join(session_folder_name, 'results', sample_folder_name)
+        makedirs(current_sample_session_folder_name)
 
-            print('Processing sample: {0}'.format(sample_folder_name))
-            current_sample_data_folder_name = join(data_folder_name, sample_folder_name)
-            current_sample_session_folder_name = join(session_folder_name, 'results', sample_folder_name)
-            makedirs(current_sample_session_folder_name)
-            system('title CRV: {0} {1} {2}'.format(group_name, strain_name, sample_folder_name))
+        compounds_without_ms2_spectra_file_name = join(current_sample_session_folder_name,
+                                                       'compounds-without-ms2-spectra.ssv')
+        spectra_file_name = join(current_sample_session_folder_name, 'spectra.msp')
 
-            compounds_without_ms2_spectra_file_name = join(current_sample_session_folder_name,
-                                                           'compounds-without-ms2-spectra.ssv')
-            spectra_file_name = join(current_sample_session_folder_name, 'spectra.msp')
+        xml_file_name = [f for f in listdir(current_sample_data_folder_name) if '.mzdata.xml' in f][0]
+        xml_file_name = join(current_sample_data_folder_name, xml_file_name)
 
-            xml_file_name = [f for f in listdir(current_sample_data_folder_name) if '.mzdata.xml' in f][0]
-            xml_file_name = join(current_sample_data_folder_name, xml_file_name)
+        all_compounds_file_name = [f for f in listdir(current_sample_data_folder_name) if '.csv' in f][0]
+        all_compounds_file_name = join(current_sample_data_folder_name, all_compounds_file_name)
 
-            all_compounds_file_name = [f for f in listdir(current_sample_data_folder_name) if '.csv' in f][0]
-            all_compounds_file_name = join(current_sample_data_folder_name, all_compounds_file_name)
+        remove_wrong_lines_from_file(all_compounds_file_name)
 
-            remove_wrong_lines_from_file(all_compounds_file_name)
+        compounds_list = parse_sample_data(xml_file_name, all_compounds_file_name,
+                                           compounds_without_ms2_spectra_file_name, spectra_file_name,
+                                           candidates_list)
 
-            compounds_list = parse_sample_data(xml_file_name, all_compounds_file_name,
-                                               compounds_without_ms2_spectra_file_name, spectra_file_name,
-                                               candidates_list)
+        cfm_answers = receive_cfm_answers(compounds_list, candidates_list, candidates_file_name, spectra_file_name)
+        print(cfm_answers)
 
-            cfm_answers = receive_cfm_answers(compounds_list, candidates_list, candidates_file_name, spectra_file_name)
-            print(cfm_answers)
+        approved_compounds_list_file_name = join(current_sample_session_folder_name, 'approved-compounds-list.ssv')
+        sample_record['approved compounds parameters'] = write_approved_compounds_list(cfm_answers,
+                                                                                       approved_compounds_list_file_name,
+                                                                                       compounds_list,
+                                                                                       candidates_list)
+        sample_records.append(sample_record)
+        print('------------------------------')
 
-            approved_compounds_list_file_name = join(current_sample_session_folder_name, 'approved-compounds-list.ssv')
-            sample_record['approved compounds parameters'] = write_approved_compounds_list(cfm_answers,
-                                                                                           approved_compounds_list_file_name,
-                                                                                           compounds_list,
-                                                                                           candidates_list)
-            sample_records.append(sample_record)
-            print('------------------------------')
+    # process collected compounds parameters
 
-        # process collected compounds parameters
+    # 1. get list of all approved compounds
+    all_approved_compound_names = []
+    for record in sample_records:
+        for compound_name in record['approved compounds parameters']:
+            if not compound_name in all_approved_compound_names:
+                all_approved_compound_names.append(compound_name)
 
-        # 1. get list of all approved compounds
-        all_approved_compound_names = []
-        for record in sample_records:
-            for compound_name in record['approved compounds parameters']:
-                if not compound_name in all_approved_compound_names:
-                    all_approved_compound_names.append(compound_name)
-
-        # 2. get list of collected parameters
-        parameter_names = []
-        for record in sample_records:
-            if len(record['approved compounds parameters']) > 0:
-                # small hack to get first compound name
-                first_compound_name = ''
-                for name in record['approved compounds parameters']:
-                    first_compound_name = name
-                    break
-
-                for parameter_name in record['approved compounds parameters'][first_compound_name]:
-                    parameter_names.append(parameter_name)
+    # 2. get list of collected parameters
+    parameter_names = []
+    for record in sample_records:
+        if len(record['approved compounds parameters']) > 0:
+            # small hack to get first compound name
+            first_compound_name = ''
+            for name in record['approved compounds parameters']:
+                first_compound_name = name
                 break
-        parameter_to_show_plot_names = ['Area']
 
-        # 3. get list of sample names
-        sample_names = [record['name'] for record in sample_records]
+            for parameter_name in record['approved compounds parameters'][first_compound_name]:
+                parameter_names.append(parameter_name)
+            break
+    parameter_to_show_plot_names = ['Area']
 
-        # 4. collect and show lists of parameter values for each parameter for each compound
-        from mpl_toolkits.mplot3d import Axes3D
-        import matplotlib.pyplot as plot
-        from math import log10
+    # 3. get list of sample names
+    sample_names = [record['name'] for record in sample_records]
 
-        colors = ['r', 'g', 'b', 'y', 'm', 'c']
+    # 4. collect and show lists of parameter values for each parameter for each compound
+    from mpl_toolkits.mplot3d import Axes3D
+    import matplotlib.pyplot as plot
+    from math import log10
 
-        for parameter_name in parameter_names:
+    colors = ['r', 'g', 'b', 'y', 'm', 'c']
+
+    for parameter_name in parameter_names:
+        if parameter_name in parameter_to_show_plot_names:
+            total_figure = plot.figure()
+            total_ax = total_figure.add_subplot(111, projection='3d')
+            total_ax.set_title(parameter_name)
+            total_ax.set_xlabel('Samples')
+            total_ax.set_zlabel('log {0}'.format(parameter_name))
+            total_ax.set_xticks([i for i in range(0, len(sample_names))])
+            total_ax.set_xticklabels(sample_names)
+            total_ax.set_yticks([i for i in range(0, len(all_approved_compound_names))])
+            total_ax.set_yticklabels(all_approved_compound_names)
+
+        compound_data_per_sample = {}
+        compound_index = 0
+        for compound_name in all_approved_compound_names:
+            compound_data_per_sample[compound_name] = []
+            for sample_name in sample_names:
+                # get corresponding sample record
+                sample_record = [r for r in sample_records if r['name'] == sample_name][0]
+
+                # get value that corresponds to compound if it is in approved list
+                if compound_name in sample_record['approved compounds parameters']:
+                    parameters = sample_record['approved compounds parameters'][compound_name]
+                    compound_data_per_sample[compound_name].append(parameters[parameter_name])
+                else:
+                    compound_data_per_sample[compound_name].append(0)
+
+            xs = [i for i in range(0, len(sample_names))]
+            ys = compound_data_per_sample[compound_name]
+            log_ys = []
+            for y in ys:
+                if y > 0:
+                    log_ys.append(log10(y))
+                else:
+                    log_ys.append(0)
             if parameter_name in parameter_to_show_plot_names:
-                total_figure = plot.figure()
-                total_ax = total_figure.add_subplot(111, projection='3d')
-                total_ax.set_title(parameter_name)
-                total_ax.set_xlabel('Samples')
-                total_ax.set_zlabel('log {0}'.format(parameter_name))
-                total_ax.set_xticks([i for i in range(0, len(sample_names))])
-                total_ax.set_xticklabels(sample_names)
-                total_ax.set_yticks([i for i in range(0, len(all_approved_compound_names))])
-                total_ax.set_yticklabels(all_approved_compound_names)
+                total_ax.bar(xs, log_ys, zs=compound_index, zdir='y', color=colors[compound_index % len(colors)],
+                             alpha=0.8)
+            compound_index += 1
 
-            compound_data_per_sample = {}
-            compound_index = 0
+        print('{0}: {1}'.format(parameter_name, compound_data_per_sample))
+
+        if parameter_name in parameter_to_show_plot_names:
             for compound_name in all_approved_compound_names:
-                compound_data_per_sample[compound_name] = []
-                for sample_name in sample_names:
-                    # get corresponding sample record
-                    sample_record = [r for r in sample_records if r['name'] == sample_name][0]
-
-                    # get value that corresponds to compound if it is in approved list
-                    if compound_name in sample_record['approved compounds parameters']:
-                        parameters = sample_record['approved compounds parameters'][compound_name]
-                        compound_data_per_sample[compound_name].append(parameters[parameter_name])
-                    else:
-                        compound_data_per_sample[compound_name].append(0)
-
+                per_compound_figure = plot.figure()
+                per_compound_ax = per_compound_figure.add_subplot(111)
+                per_compound_ax.set_title(compound_name)
+                per_compound_ax.set_xlabel('Samples')
+                per_compound_ax.set_ylabel(parameter_name)
+                per_compound_ax.set_xticks([i for i in range(0, len(sample_names))])
+                per_compound_ax.set_xticklabels(sample_names)
                 xs = [i for i in range(0, len(sample_names))]
                 ys = compound_data_per_sample[compound_name]
-                log_ys = []
-                for y in ys:
-                    if y > 0:
-                        log_ys.append(log10(y))
-                    else:
-                        log_ys.append(0)
-                if parameter_name in parameter_to_show_plot_names:
-                    total_ax.bar(xs, log_ys, zs=compound_index, zdir='y', color=colors[compound_index % len(colors)],
-                                 alpha=0.8)
-                compound_index += 1
+                per_compound_ax.bar(xs, ys, color='b', alpha=1.)
+                plot_file_name = join(session_folder_name, 'results',
+                                      '{0}_{1}.png'.format(parameter_name, compound_name))
+                per_compound_figure.savefig(plot_file_name, dpi=600, facecolor='w', orientation='landscape',
+                                            format='png')
 
-            print('{0}: {1}'.format(parameter_name, compound_data_per_sample))
-
-            if parameter_name in parameter_to_show_plot_names:
-                for compound_name in all_approved_compound_names:
-                    per_compound_figure = plot.figure()
-                    per_compound_ax = per_compound_figure.add_subplot(111)
-                    per_compound_ax.set_title(compound_name)
-                    per_compound_ax.set_xlabel('Samples')
-                    per_compound_ax.set_ylabel(parameter_name)
-                    per_compound_ax.set_xticks([i for i in range(0, len(sample_names))])
-                    per_compound_ax.set_xticklabels(sample_names)
-                    xs = [i for i in range(0, len(sample_names))]
-                    ys = compound_data_per_sample[compound_name]
-                    per_compound_ax.bar(xs, ys, color='b', alpha=1.)
-                    plot_file_name = join(session_folder_name, 'results',
-                                          '{0}_{1}.png'.format(parameter_name, compound_name))
-                    per_compound_figure.savefig(plot_file_name, dpi=600, facecolor='w', orientation='landscape',
-                                                format='png')
-
-            parameter_file_name = join(session_folder_name, 'results', '{0}.ssv'.format(parameter_name))
-            file = open(parameter_file_name, 'w')
-            file.write('Compound')
-            for sample_name in sample_names:
-                file.write(';{0}'.format(sample_name))
+        parameter_file_name = join(session_folder_name, 'results', '{0}.ssv'.format(parameter_name))
+        file = open(parameter_file_name, 'w')
+        file.write('Compound')
+        for sample_name in sample_names:
+            file.write(';{0}'.format(sample_name))
+        file.write('\n')
+        for compound_name in all_approved_compound_names:
+            file.write(compound_name)
+            for parameter_value in compound_data_per_sample[compound_name]:
+                file.write(';{0}'.format(parameter_value))
             file.write('\n')
-            for compound_name in all_approved_compound_names:
-                file.write(compound_name)
-                for parameter_value in compound_data_per_sample[compound_name]:
-                    file.write(';{0}'.format(parameter_value))
-                file.write('\n')
-            file.close()
-            print('{0} data saved to {1}.'.format(parameter_name, parameter_file_name))
+        file.close()
+        print('{0} data saved to {1}.'.format(parameter_name, parameter_file_name))
         # plot.show()
+
+
+if __name__ == '__main__':
+    main()
