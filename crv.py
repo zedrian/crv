@@ -283,7 +283,16 @@ def parse_sample_data(xml_file_name, csv_file_name, compounds_without_ms2_spectr
         cvParam_list = spectrumInstrument.findall('cvParam')
         for cvParam in cvParam_list:
             if cvParam.attrib['name'] == 'TimeInMinutes':
-                duplicate_rt = float(cvParam.attrib['value'])
+                rt_value = cvParam.attrib['value']
+                duplicate_rt = None
+                if '-' in rt_value:
+                    # rt is set as a range min-max, get median
+                    rt_components = rt_value.split('-')
+                    rt_min = float(rt_components[0])
+                    rt_max = float(rt_components[1])
+                    duplicate_rt = (rt_min + rt_max) / 2.
+                else:
+                    duplicate_rt = float(rt_value)
                 break
         if duplicate_rt is None:
             print('Cannot find RT value for spectrum: {0}'.format(id))
