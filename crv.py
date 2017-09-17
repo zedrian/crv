@@ -37,7 +37,7 @@ def load_compounds_list(file_name):
     return compounds_list
 
 
-def select_database(root_folder):
+def select_database(root_folder, ask_user: bool):
     database_names = [f for f in listdir(root_folder) if isdir(join(root_folder, f))]
     index = 1
     print('Available databases:')
@@ -45,7 +45,10 @@ def select_database(root_folder):
         print('{0}. {1}'.format(index, name))
         index += 1
 
-    index = int(input('Select database: '))
+    if ask_user:
+        index = int(input('Select database: '))
+    else:
+        index = 1
 
     file_name = join(root_folder, database_names[index - 1], 'compounds-list.txt')
     if not isfile(file_name):
@@ -55,19 +58,22 @@ def select_database(root_folder):
     return database_names[index - 1]
 
 
-def get_compounds_list_file_name(database_folder_name):
-    file_name = input('Enter compounds list file name (or press ENTER to use default compounds-list.txt from database): ')
+def get_compounds_list_file_name(database_folder_name, ask_user: bool):
+    if ask_user:
+        file_name = input('Enter compounds list file name (or press ENTER to use default compounds-list.txt from database): ')
+    else:
+        file_name = ''
     if file_name == '':
         file_name = join(database_folder_name, 'compounds-list.txt')
     return file_name
 
 
-def construct_database(strain_name: str, minimal_intensity: float = 0.0):
+def construct_database(strain_name: str, ask_user: bool = True, minimal_intensity: float = 0.0):
     database_root_folder = 'databases'
-    database_name = select_database(database_root_folder)
+    database_name = select_database(database_root_folder, ask_user)
 
     database_folder_name = join(database_root_folder, database_name)
-    compounds_list_file_name = get_compounds_list_file_name(database_folder_name)
+    compounds_list_file_name = get_compounds_list_file_name(database_folder_name, ask_user)
 
     compounds = load_compounds_list(compounds_list_file_name)
 
@@ -670,11 +676,26 @@ def remove_wrong_lines_from_file(all_compounds_file_name: str):
         file.write(line)
     file.close()
 
-def main():
-    data_folder_name = input('Enter data folder name: ')
-    strain_name = data_folder_name.replace('\\', '/').split('/')[-1].replace(' ', '-')
 
-    session_folder_name, candidates_list, candidates_file_name = construct_database(strain_name, 0.0001)
+def folder_contains_strains(data_folder_name: str) -> bool:
+    subfolders = [join(data_folder_name, f) for f in listdir(data_folder_name) if isdir(join(data_folder_name, f))]
+
+    # get first subfolder
+    subfolder = subfolders[0]
+
+    # if subfolder contains mzdata file, it is a sample folder => data folder is a single strain data
+    mzdata_files = [f for f in listdir(subfolder) if isfile(join(subfolder, f)) and '.mzdata.xml' in f]
+    if len(mzdata_files) != 0:
+        return False
+
+    return True
+
+
+def process_single_strain(data_folder_name: str, ask_user: bool):
+    strain_name = data_folder_name.replace('\\', '/').split('/')[-1].replace(' ', '-')
+    print('Processing strain: {0}'.format(strain_name))
+
+    session_folder_name, candidates_list, candidates_file_name = construct_database(strain_name, ask_user, 0.0001)
 
     sample_folder_names = [f for f in listdir(data_folder_name) if isdir(join(data_folder_name, f))]
     print('Folders with sample data found:')
@@ -826,7 +847,22 @@ def main():
             file.write('\n')
         file.close()
         print('{0} data saved to {1}.'.format(parameter_name, parameter_file_name))
-        # plot.show()
+    print('==============================================================================')
+
+
+def main():
+    data_folder_name = input('Enter data folder name: ')
+
+    process_several_strains = folder_contains_strains(data_folder_name)
+
+    if not process_several_strains:
+        print('Data folder contains only one strain.')
+        process_single_strain(data_folder_name, True)
+    else:
+        print('Data folder contains several strains.')
+        strain_folder_names = [join(data_folder_name, f) for f in listdir(data_folder_name) if isdir(join(data_folder_name, f))]
+        for strain_folder_name in strain_folder_names:
+            process_single_strain(strain_folder_name, False)
 
 
 if __name__ == '__main__':
