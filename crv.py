@@ -2,13 +2,192 @@ from os import listdir, makedirs, system
 from os.path import isfile, join, isdir
 from datetime import datetime
 from pandas import DataFrame, read_csv
-from xml.etree.ElementTree import parse
+from xml.etree.ElementTree import parse, ElementTree
 from base64 import standard_b64decode
 from struct import unpack
 from collections import namedtuple
 import subprocess
 from sys import stdout
 
+
+class MS1Spectrum:
+    def __init__(self, id: str, mz_min: float, mz_max: float, rt: float, masses: tuple, intensities: tuple):
+        self.id = id
+        self.mz_min = mz_min
+        self.mz_max = mz_max
+        self.rt = rt
+        self.masses = list(masses)
+        self.intensities = list(intensities)
+
+    def __str__(self):
+        return 'MS1 spectrum (id={0}, mz={1}-{2}, RT={3}, masses={4}, intensities={5})'.format(self.id, self.mz_min, self.mz_max, self.rt, self.masses, self.intensities)
+
+    def __repr__(self):
+        return self.__str__()
+
+
+class MS2Spectrum:
+    def __init__(self, id: str, mz: float, rt: float, energy: str, masses: tuple, intensities: tuple):
+        self.id = id
+        self.mz = mz
+        self.rt = rt
+        self.energy = energy
+        self.masses = list(masses)
+        self.intensities = list(intensities)
+
+    def __str__(self):
+        return 'MS2 spectrum (id={0}, mz={1}, RT={2}, energy={3}, masses={4}, intensities={5})'.format(self.id, self.mz, self.rt, self.energy, self.masses, self.intensities)
+
+    def __repr__(self):
+        return self.__str__()
+
+
+class MzData:
+    def __init__(self):
+        self.file_name = None
+        self.ms1_spectra = []
+        self.ms2_spectra = []
+
+    def load(self, file_name: str):
+        print('Extracting MZ data from file: {0}'.format(file_name))
+        self.file_name = file_name
+        tree = parse(file_name)
+        root = tree.getroot()
+
+        spectrumList_node = root.find('spectrumList')
+        spectra_nodes = spectrumList_node.findall('spectrum')
+        print('Spectra found: {0}'.format(len(spectra_nodes)))
+
+        for node in spectra_nodes:
+            self.load_spectrum_from_xml(node)
+        print('MS1 spectra loaded: {0}'.format(len(self.ms1_spectra)))
+        print('MS2 spectra loaded: {0}'.format(len(self.ms2_spectra)))
+
+    def load_spectrum_from_xml(self, xml: ElementTree):
+        id = xml.attrib['id']
+
+        spectrumInstrument_node = xml.find('spectrumDesc').find('spectrumSettings').find('spectrumInstrument')
+        level = spectrumInstrument_node.attrib['msLevel']  # '1' or '2'
+
+        if level == '1':
+            # load mz
+            mz_min = float(spectrumInstrument_node.attrib['mzRangeStart'])
+            mz_max = float(spectrumInstrument_node.attrib['mzRangeStop'])
+
+            # load RT
+            rt = None
+            cvParam_nodes = spectrumInstrument_node.findall('cvParam')
+            for cvParam_node in cvParam_nodes:
+                if cvParam_node.attrib['name'] == 'TimeInMinutes':
+                    rt_attribute = cvParam_node.attrib['value']
+                    # check if RT attribute consists of two components with '-' between them
+                    if '-' in rt_attribute:
+                        # RT is presented by two values: min-max, get median
+                        components = rt_attribute.split('-')
+                        rt_min = float(components[0])
+                        rt_max = float(components[1])
+                        rt = (rt_min + rt_max) / 2.
+                    else:
+                        # RT is a single value
+                        rt = float(rt_attribute)
+                    break
+
+            # load masses
+            mzArrayBinary_node = xml.find('mzArrayBinary').find('data')
+            mz_data = mzArrayBinary_node.text
+            if mz_data is None:
+                print('WARNING: MS1 spectrum without mz data found: {0}'.format(id))
+                return
+            mz_decoded = standard_b64decode(mz_data)
+            mz_count = len(mz_decoded) // 8
+            masses = unpack('<{0}d'.format(mz_count), mz_decoded)
+
+            # load intensities
+            intenArrayBinary_node = xml.find('intenArrayBinary').find('data')
+            intensities_data = intenArrayBinary_node.text
+            intensities_decoded = standard_b64decode(intensities_data)
+            intensities = unpack('<{0}f'.format(mz_count), intensities_decoded)
+
+            self.ms1_spectra.append(MS1Spectrum(id, mz_min, mz_max, rt, masses, intensities))
+        else:
+            # load RT
+            rt = None
+            cvParam_nodes = spectrumInstrument_node.findall('cvParam')
+            for cvParam_node in cvParam_nodes:
+                if cvParam_node.attrib['name'] == 'TimeInMinutes':
+                    rt_attribute = cvParam_node.attrib['value']
+                    # check if RT attribute consists of two components with '-' between them
+                    if '-' in rt_attribute:
+                        # RT is presented by two values: min-max, get median
+                        components = rt_attribute.split('-')
+                        rt_min = float(components[0])
+                        rt_max = float(components[1])
+                        rt = (rt_min + rt_max) / 2.
+                    else:
+                        # RT is a single value
+                        rt = float(rt_attribute)
+                    break
+            if rt is None:
+                print('Cannot find RT value for MS2 spectrum: {0}'.format(id))
+                exit()
+
+            # load mz and energy level
+            precursorList_node = xml.find('spectrumDesc').find('precursorList')
+            precursor_nodes = precursorList_node.findall('precursor')
+            if len(precursor_nodes) > 1:
+                print('WARNING: MS2 spectrum with {0} precursors found: {1}'.format(len(precursor_nodes), id))
+            mz = None
+            energy = None
+            for precursor_node in precursor_nodes:
+                # find mz
+                cvParam_nodes = precursor_node.find('ionSelection').findall('cvParam')
+                for cvParam_node in cvParam_nodes:
+                    if cvParam_node.attrib['name'] == 'MassToChargeRatio':
+                        mz = float(cvParam_node.attrib['value'])
+                        break
+
+                # find energy
+                cvParam_nodes = precursor_node.find('activation').findall('cvParam')
+                for cvParam_node in cvParam_nodes:
+                    if cvParam_node.attrib['name'] == 'CollisionEnergy':
+                        energy = cvParam_node.attrib['value']
+
+            # load masses
+            mzArrayBinary_node = xml.find('mzArrayBinary').find('data')
+            mz_data = mzArrayBinary_node.text
+            if mz_data is None:
+                print('WARNING: MS2 spectrum without mz data found: {0}'.format(id))
+                return
+            mz_decoded = standard_b64decode(mz_data)
+            mz_count = len(mz_decoded) // 8
+            masses = unpack('<{0}d'.format(mz_count), mz_decoded)
+
+            # load intensities
+            intenArrayBinary_nodes = xml.find('intenArrayBinary').find('data')
+            intensities_data = intenArrayBinary_nodes.text
+            intensities_decoded = standard_b64decode(intensities_data)
+            intensities = unpack('<{0}f'.format(mz_count), intensities_decoded)
+
+            # use only masses that are smaller than 1.00001 * mz?
+            # masses = []
+            # intensities = []
+            # for i in range(0, len(masses)):
+            #     if masses[i] < 1.00001 * mz:
+            #         masses.append(masses[i])
+            #         intensities.append(intensities[i])
+
+            self.ms2_spectra.append(MS2Spectrum(id, mz, rt, energy, masses, intensities))
+
+    def __str__(self):
+        return '\n'.join([
+            'MZ data from file: {0}'.format(self.file_name),
+            'MS1 spectra: {0}'.format(len(self.ms1_spectra)),
+            '\n'.join([str(spectrum) for spectrum in self.ms1_spectra]),
+            '---',
+            'MS2 spectra: {0}'.format(len(self.ms2_spectra)),
+            '\n'.join([str(spectrum) for spectrum in self.ms2_spectra]),
+            '---'
+        ])
 
 # smart progress bar
 def show_progress(label, width, percentage):
@@ -92,7 +271,7 @@ def construct_database(strain_name: str, ask_user: bool = True, minimal_intensit
     session_root_folder = 'sessions'
     time = datetime.now()
     session_name = '{0}-{1}-{2}_{3}-{4}-{5}__{6}'.format(time.year, time.month, time.day, time.hour, time.minute,
-                                                    time.second, strain_name)
+                                                         time.second, strain_name)
     session_folder_name = join(session_root_folder, session_name)
     makedirs(session_folder_name)
 
@@ -259,6 +438,7 @@ def filter_fragments(sample_energies, database_energies):
                 filtered_energies.append(filtered_energy)
 
     return filtered_energies
+
 
 def parse_sample_data(xml_file_name, csv_file_name, compounds_without_ms2_spectra_file_name, spectra_file_name,
                       candidates_list):
@@ -481,6 +661,7 @@ def parse_sample_data(xml_file_name, csv_file_name, compounds_without_ms2_spectr
     print('Compounds without MS2 spectra saved to \'{0}\'.'.format(compounds_without_ms2_spectra_file_name))
     return compounds_list
 
+
 def receive_cfm_answers(compounds_list, candidates_list, candidates_file_name, spectra_file_name):
     label = 'CFM-ID analysis processing: '
     show_progress(label, 40, 0.0)
@@ -521,6 +702,7 @@ def receive_cfm_answers(compounds_list, candidates_list, candidates_file_name, s
         show_progress(label, 40, progress)
     print()
     return cfm_answers
+
 
 def write_approved_compounds_list(cfm_answers, file_name, compounds_list,
                                   candidates_list):  # return dictionary: key is approved compound name, value is dictionary: key is parameter name, value is parameter value
@@ -658,6 +840,7 @@ def write_approved_compounds_list(cfm_answers, file_name, compounds_list,
     print('Approved compounds list saved to \'{0}\'.'.format(file_name))
     return approved_compounds_parameters
 
+
 def remove_wrong_lines_from_file(all_compounds_file_name: str):
     file = open(all_compounds_file_name)
     lines = file.readlines()
@@ -730,6 +913,95 @@ def process_single_strain(data_folder_name: str, ask_user: bool):
                                            compounds_without_ms2_spectra_file_name, spectra_file_name,
                                            candidates_list)
 
+
+        # isotope analysis, motherfucker!
+        mzdata = MzData()
+        mzdata.load(xml_file_name)
+        print(mzdata)
+        all_compounds_list = read_csv(all_compounds_file_name, header=2, index_col=False, usecols=['Name', 'Mass', 'RT'])
+
+        # construct list of compounds
+        compounds = []
+        for i in range(0, len(all_compounds_list)):
+            name = all_compounds_list['Name'][i]
+            precursor_like_mass = all_compounds_list['Mass'][i]
+            rt = all_compounds_list['RT'][i]
+            compounds.append({'name': name, 'mass': precursor_like_mass, 'rt': rt})
+
+        # load ionization cases
+        ionization_cases_list_file_name = 'ionization-cases-list.ssv'
+        ionization_cases_list = read_csv(ionization_cases_list_file_name, index_col=False, sep=';')
+
+        # construct list of precursors
+        for compound in compounds:
+            for ionization_index in range(0, len(ionization_cases_list)):
+                precursor_like_mass = compound['mass']
+                delta_mass = ionization_cases_list['DeltaMass'][ionization_index]
+                if not 'precursors' in compound:
+                    compound['precursors'] = []
+                compound['precursors'].append(precursor_like_mass + delta_mass)
+
+        # look for MS1 spectra with the same mass
+        for compound in compounds:
+            # find spectrum with nearest RT
+            nearest_spectrum_delta_rt = 10000
+            nearest_spectrum_index = -1
+            for spectrum_index in range(0, len(mzdata.ms1_spectra)):
+                spectrum = mzdata.ms1_spectra[spectrum_index]
+                delta_rt = abs(spectrum.rt - compound['rt'])
+                if delta_rt < nearest_spectrum_delta_rt:
+                    nearest_spectrum_delta_rt = delta_rt
+                    nearest_spectrum_index = spectrum_index
+
+            spectrum = mzdata.ms1_spectra[nearest_spectrum_index]
+
+            # go through precursors trying to find almost the same mass
+            for precursor_mass in compound['precursors'][::-1]:
+                for mass_index in range(0, len(spectrum.masses)):
+                    precursor_like_mass = spectrum.masses[mass_index]
+                    if abs(precursor_like_mass - precursor_mass) <= 5e-6 * precursor_mass:
+                        print('Precursor with almost same mass found:')
+                        print('Compound: {0}'.format(compound['name']))
+                        print('Precursor mass: {0}'.format(precursor_mass))
+                        print('Spectrum masses: {0}'.format(spectrum.masses))
+
+                        # find mass with maximal intensity
+                        maximal_intensity = 0
+                        maximal_intensity_mass = None
+                        for i in range(0, len(spectrum.masses)):
+                            precursor_like_mass = spectrum.masses[i]
+                            intensity = spectrum.intensities[i]
+                            if intensity > maximal_intensity:
+                                maximal_intensity = intensity
+                                maximal_intensity_mass = precursor_like_mass
+                        print('Mass with maximal intensity: {0} ({1})'.format(maximal_intensity_mass, maximal_intensity))
+
+                        # find intensity for precursor-like mass
+                        precursor_like_mass_intensity = spectrum.intensities[mass_index]
+                        print('Precursor-like mass: {0} ({1})'.format(precursor_like_mass, precursor_like_mass_intensity))
+
+                        # find M+1
+                        m_plus_1_mass = precursor_mass + 1.0009
+                        print('M+1: {0}'.format(m_plus_1_mass))
+                        for i in range(0, len(spectrum.masses)):
+                            m_plus_1_like_mass = spectrum.masses[i]
+                            if abs(m_plus_1_like_mass - m_plus_1_mass) <= 10e-6 * m_plus_1_mass:
+                                m_plus_1_like_mass_intensity = spectrum.intensities[i]
+                                print('M+1-like mass: {0} ({1})'.format(m_plus_1_like_mass, m_plus_1_like_mass_intensity))
+
+                        # find M+2
+                        m_plus_2_mass = precursor_mass + 1.0009 * 2
+                        print('M+2: {0}'.format(m_plus_2_mass))
+                        for i in range(0, len(spectrum.masses)):
+                            m_plus_2_like_mass = spectrum.masses[i]
+                            if abs(m_plus_2_like_mass - m_plus_2_mass) <= 10e-6 * m_plus_2_mass:
+                                m_plus_2_like_mass_intensity = spectrum.intensities[i]
+                                print('M+2-like mass: {0} ({1})'.format(m_plus_2_like_mass, m_plus_2_like_mass_intensity))
+
+                        print()
+                        break
+
+        exit()
         cfm_answers = receive_cfm_answers(compounds_list, candidates_list, candidates_file_name, spectra_file_name)
         print(cfm_answers)
 
