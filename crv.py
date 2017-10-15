@@ -266,85 +266,9 @@ def parse_sample_data(xml_file_name, csv_file_name, compounds_without_ms2_spectr
 
     Spectrum = namedtuple('Spectrum', 'id mz rt energy masses intensities')
     print('Parsing file: {0}'.format(xml_file_name))
-    # tree = parse(xml_file_name)
-    # root = tree.getroot()
-    # spectrumList = root.find('spectrumList')
-    #
-    # spectrum_list = spectrumList.findall('spectrum')
-    # print('Spectra found: {0}'.format(len(spectrum_list)))
-    #
-    # spectrum_with_precursors_list = []
-    # for spectrum in spectrum_list:
-    #     desc = spectrum.find('spectrumDesc')
-    #     if desc.find('precursorList') is not None:
-    #         spectrum_with_precursors_list.append(spectrum)
-    # print('Spectra with precursors found: {0}'.format(len(spectrum_with_precursors_list)))
-    #
-    # spectrum_data_list = []
-    # for spectrum in spectrum_with_precursors_list:
-    #     id = spectrum.attrib['id']
-    #     duplicate_rt = None
-    #     spectrumInstrument = spectrum.find('spectrumDesc').find('spectrumSettings').find('spectrumInstrument')
-    #     cvParam_list = spectrumInstrument.findall('cvParam')
-    #     for cvParam in cvParam_list:
-    #         if cvParam.attrib['name'] == 'TimeInMinutes':
-    #             rt_value = cvParam.attrib['value']
-    #             duplicate_rt = None
-    #             if '-' in rt_value:
-    #                 # rt is set as a range min-max, get median
-    #                 rt_components = rt_value.split('-')
-    #                 rt_min = float(rt_components[0])
-    #                 rt_max = float(rt_components[1])
-    #                 duplicate_rt = (rt_min + rt_max) / 2.
-    #             else:
-    #                 duplicate_rt = float(rt_value)
-    #             break
-    #     if duplicate_rt is None:
-    #         print('Cannot find RT value for spectrum: {0}'.format(id))
-    #         exit()
-    #     precursorList = spectrum.find('spectrumDesc').find('precursorList')
-    #     precursor_list = precursorList.findall('precursor')
-    #     if len(precursor_list) > 1:
-    #         print('WARNING: spectrum with {0} precursors found: {1}'.format(len(precursor_list), id))
-    #     for precursor in precursor_list:
-    #         mz = 0.0
-    #         cvParam_list = precursor.find('ionSelection').findall('cvParam')
-    #         for cvParam in cvParam_list:
-    #             if cvParam.attrib['name'] == 'MassToChargeRatio':
-    #                 mz = float(cvParam.attrib['value'])
-    #                 break
-    #
-    #         energy = 0
-    #         cvParam_list = precursor.find('activation').findall('cvParam')
-    #         for cvParam in cvParam_list:
-    #             if cvParam.attrib['name'] == 'CollisionEnergy':
-    #                 energy = cvParam.attrib['value']
-    #
-    #     mzArrayBinary = spectrum.find('mzArrayBinary').find('data')
-    #     mzArrayBinary_data = mzArrayBinary.text
-    #     if mzArrayBinary_data is None:
-    #         print('WARNING: spectrum without mz data found: {0}'.format(id))
-    #         continue
-    #     mzArrayBinary_decoded = standard_b64decode(mzArrayBinary_data)
-    #     mzArrayBinary_count = len(mzArrayBinary_decoded) // 8
-    #     mzArray = unpack('<{0}d'.format(mzArrayBinary_count), mzArrayBinary_decoded)
-    #
-    #     intenArrayBinary = spectrum.find('intenArrayBinary').find('data')
-    #     intenArrayBinary_data = intenArrayBinary.text
-    #     intenArrayBinary_decoded = standard_b64decode(intenArrayBinary_data)
-    #     intenArray = unpack('<{0}f'.format(mzArrayBinary_count), intenArrayBinary_decoded)
-    #
-    #     masses = []
-    #     intensities = []
-    #     for i in range(0, len(mzArray)):
-    #         if mzArray[i] < 1.00001 * mz:
-    #             masses.append(mzArray[i])
-    #             intensities.append(intenArray[i])
-    #
-    #     spectrum_data_list.append(
-    #         Spectrum(id=id, mz=mz, rt=duplicate_rt, energy=energy, masses=masses, intensities=intensities))
-    spectrum_data_list = MzData()
-    spectrum_data_list.load(xml_file_name)
+
+    mzData = MzData()
+    mzData.load(xml_file_name)
 
     print('Processing compounds from file: {0}'.format(csv_file_name))
     all_compounds_list = read_csv(csv_file_name, header=2, index_col=False,
@@ -357,7 +281,7 @@ def parse_sample_data(xml_file_name, csv_file_name, compounds_without_ms2_spectr
         precursor = all_compounds_list['Precursor'][i]
         mass = all_compounds_list['Mass'][i]
         matches = []
-        for spectrum in spectrum_data_list.ms2_spectra:
+        for spectrum in mzData.ms2_spectra:
             for ionization_case_index in range(0, len(ionization_cases_list)):
                 if abs(mass + ionization_cases_list['DeltaMass'][
                     ionization_case_index] - spectrum.mz) <= mass / 100000.0:
