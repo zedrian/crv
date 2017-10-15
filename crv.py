@@ -267,8 +267,8 @@ def parse_sample_data(xml_file_name, csv_file_name, compounds_without_ms2_spectr
     Spectrum = namedtuple('Spectrum', 'id mz rt energy masses intensities')
     print('Parsing file: {0}'.format(xml_file_name))
 
-    mzData = MzData()
-    mzData.load(xml_file_name)
+    mz_data = MzData()
+    mz_data.load(xml_file_name)
 
     print('Processing compounds from file: {0}'.format(csv_file_name))
     all_compounds_list = read_csv(csv_file_name, header=2, index_col=False,
@@ -281,7 +281,7 @@ def parse_sample_data(xml_file_name, csv_file_name, compounds_without_ms2_spectr
         precursor = all_compounds_list['Precursor'][i]
         mass = all_compounds_list['Mass'][i]
         matches = []
-        for spectrum in mzData.ms2_spectra:
+        for spectrum in mz_data.ms2_spectra:
             for ionization_case_index in range(0, len(ionization_cases_list)):
                 if abs(mass + ionization_cases_list['DeltaMass'][
                     ionization_case_index] - spectrum.mz) <= mass / 100000.0:
