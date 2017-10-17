@@ -5,7 +5,7 @@ from pandas import read_csv
 from collections import namedtuple
 import subprocess
 from sys import stdout
-from crv.mzData import MzData
+from crv.mz_data import MzData
 
 
 # smart progress bar

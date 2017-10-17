@@ -1,8 +1,9 @@
 from xml.etree.ElementTree import parse, ElementTree
 from base64 import standard_b64decode
 from struct import unpack
-from crv.ms1Spectrum import MS1Spectrum
-from crv.ms2Spectrum import MS2Spectrum
+
+from crv.ms1_spectrum import MS1Spectrum
+from crv.ms2_spectrum import MS2Spectrum
 
 
 class MzData:
