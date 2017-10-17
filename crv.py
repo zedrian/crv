@@ -662,7 +662,6 @@ def process_single_strain(data_folder_name: str, ask_user: bool):
         # isotope analysis, motherfucker!
         mzdata = MzData()
         mzdata.load(xml_file_name)
-        print(mzdata)
         all_compounds_list = read_csv(all_compounds_file_name, header=2, index_col=False, usecols=['Name', 'Mass', 'RT'])
 
         # construct list of compounds
@@ -746,7 +745,6 @@ def process_single_strain(data_folder_name: str, ask_user: bool):
                         print()
                         break
 
-        exit()
         cfm_answers = receive_cfm_answers(compounds_list, candidates_list, candidates_file_name, spectra_file_name)
         print(cfm_answers)
 
