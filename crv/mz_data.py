@@ -1,6 +1,6 @@
-from xml.etree.ElementTree import parse, ElementTree
 from base64 import standard_b64decode
 from struct import unpack
+from xml.etree.ElementTree import parse, ElementTree
 
 from crv.ms1_spectrum import MS1Spectrum
 from crv.ms2_spectrum import MS2Spectrum

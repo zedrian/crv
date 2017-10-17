@@ -1,10 +1,11 @@
+from collections import namedtuple
+from datetime import datetime
 from os import listdir, makedirs, system
 from os.path import isfile, join, isdir
-from datetime import datetime
-from pandas import read_csv
-from collections import namedtuple
 import subprocess
 from sys import stdout
+from pandas import read_csv
+
 from crv.mz_data import MzData
 
 
