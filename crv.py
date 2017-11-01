@@ -1,25 +1,14 @@
+import subprocess
 from collections import namedtuple
 from datetime import datetime
-from os import listdir, makedirs, system
+from os import listdir, makedirs
 from os.path import isfile, join, isdir
-import subprocess
-from sys import stdout
+
 from pandas import read_csv
 
-from crv.mz_data import MzData
-
-
-# smart progress bar
-def show_progress(label, width, percentage):
-    progress = '['
-    for i in range(0, width):
-        if i / width < percentage:
-            progress += '#'
-        else:
-            progress += ' '
-    progress += '] {0:.1%}'.format(percentage)
-    print('\r' + label + progress, end='')
-    stdout.flush()
+from mz_data import MzData
+from primary_compound_data import PrimaryCompoundData
+from utility import show_progress
 
 
 def load_compounds_list(file_name):
@@ -271,31 +260,30 @@ def parse_sample_data(xml_file_name, csv_file_name, compounds_without_ms2_spectr
     mz_data = MzData()
     mz_data.load(xml_file_name)
 
-    print('Processing compounds from file: {0}'.format(csv_file_name))
-    all_compounds_list = read_csv(csv_file_name, header=2, index_col=False,
-                                  usecols=['Name', 'Mass', 'RT', 'Area', 'Score', 'Precursor'])
+    primary_compound_data = PrimaryCompoundData()
+    primary_compound_data.load(csv_file_name)
+
     Compound = namedtuple('Compound', 'name mass rt area score precursor matches')
 
     # collect compounds
     compounds_list = []
-    for i in range(0, len(all_compounds_list)):
-        precursor = all_compounds_list['Precursor'][i]
-        mass = all_compounds_list['Mass'][i]
+    for i in range(0, len(primary_compound_data.data)):
+        precursor = primary_compound_data.data['Precursor'][i]
+        mass = primary_compound_data.data['Mass'][i]
         matches = []
         for spectrum in mz_data.ms2_spectra:
             for ionization_case_index in range(0, len(ionization_cases_list)):
-                if abs(mass + ionization_cases_list['DeltaMass'][
-                    ionization_case_index] - spectrum.mz) <= mass / 100000.0:
+                if abs(mass + ionization_cases_list['DeltaMass'][ionization_case_index] - spectrum.mz) <= mass / 100000.0:
                     if spectrum.energy == '10':
                         matches.append({'10': spectrum})
                     else:
                         matches[-1][spectrum.energy] = spectrum
 
-        name = all_compounds_list['Name'][i]
-        mass = all_compounds_list['Mass'][i]
-        duplicate_rt = all_compounds_list['RT'][i]
-        area = all_compounds_list['Area'][i]
-        score = all_compounds_list['Score'][i]
+        name = primary_compound_data.data['Name'][i]
+        mass = primary_compound_data.data['Mass'][i]
+        duplicate_rt = primary_compound_data.data['RT'][i]
+        area = primary_compound_data.data['Area'][i]
+        score = primary_compound_data.data['Score'][i]
 
         if precursor == mass:
             print('-- compound with precursor equal to mass found: {0}'.format(name))
@@ -410,7 +398,7 @@ def parse_sample_data(xml_file_name, csv_file_name, compounds_without_ms2_spectr
 
 def receive_cfm_answers(compounds_list, candidates_list, candidates_file_name, spectra_file_name):
     label = 'CFM-ID analysis processing: '
-    show_progress(label, 40, 0.0)
+    show_progress(label, 0.0)
 
     command = 'cfm-id/cfm-id-precomputed.exe {0} {1} {2} -1 10 0.0005 DotProduct'
 
@@ -445,7 +433,7 @@ def receive_cfm_answers(compounds_list, candidates_list, candidates_file_name, s
             cfm_answer['matches_ratio'] = len(cfm_answer['alternatives'][compound.name]) / len(compound.matches)
         cfm_answers.append(cfm_answer)
         progress += 1 / len(compounds_list)
-        show_progress(label, 40, progress)
+        show_progress(label, progress)
     print()
     return cfm_answers
 
@@ -653,24 +641,24 @@ def process_single_strain(data_folder_name: str, ask_user: bool):
         all_compounds_file_name = [f for f in listdir(current_sample_data_folder_name) if '.csv' in f][0]
         all_compounds_file_name = join(current_sample_data_folder_name, all_compounds_file_name)
 
-        remove_wrong_lines_from_file(all_compounds_file_name)
+        # remove_wrong_lines_from_file(all_compounds_file_name)
 
         compounds_list = parse_sample_data(xml_file_name, all_compounds_file_name,
                                            compounds_without_ms2_spectra_file_name, spectra_file_name,
                                            candidates_list)
 
-
         # isotope analysis, motherfucker!
         mzdata = MzData()
         mzdata.load(xml_file_name)
-        all_compounds_list = read_csv(all_compounds_file_name, header=2, index_col=False, usecols=['Name', 'Mass', 'RT'])
+        primary_compound_data = PrimaryCompoundData()
+        primary_compound_data.load(all_compounds_file_name)
 
         # construct list of compounds
         compounds = []
-        for i in range(0, len(all_compounds_list)):
-            name = all_compounds_list['Name'][i]
-            precursor_like_mass = all_compounds_list['Mass'][i]
-            rt = all_compounds_list['RT'][i]
+        for i in range(0, len(primary_compound_data.data)):
+            name = primary_compound_data.data['Name'][i]
+            precursor_like_mass = primary_compound_data.data['Mass'][i]
+            rt = primary_compound_data.data['RT'][i]
             compounds.append({'name': name, 'mass': precursor_like_mass, 'rt': rt})
 
         # load ionization cases
@@ -785,8 +773,8 @@ def process_single_strain(data_folder_name: str, ask_user: bool):
     sample_names = [record['name'] for record in sample_records]
 
     # 4. collect and show lists of parameter values for each parameter for each compound
-    from mpl_toolkits.mplot3d import Axes3D
     import matplotlib.pyplot as plot
+    from mpl_toolkits.mplot3d import Axes3D
     from math import log10
 
     colors = ['r', 'g', 'b', 'y', 'm', 'c']
