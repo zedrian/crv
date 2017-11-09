@@ -24,3 +24,12 @@ def show_progress(label: str, percentage: float, width: int = 40):
         ending = ''
     print('\r' + label + progress, end=ending)
     stdout.flush()
+
+
+# Simple comparison with delta wrapper.
+def almost_equal(x: float, y: float, needed_delta: float = 10e-6, delta_is_relative: bool = True):
+    current_delta = abs(x - y)
+    if delta_is_relative:
+        return current_delta / x <= needed_delta
+    else:
+        return current_delta <= needed_delta

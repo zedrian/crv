@@ -64,13 +64,13 @@ class MzData:
                 return
             mz_decoded = standard_b64decode(mz_data)
             mz_count = len(mz_decoded) // 8
-            masses = unpack('<{0}d'.format(mz_count), mz_decoded)
+            masses = list(unpack('<{0}d'.format(mz_count), mz_decoded))
 
             # load intensities
             intenArrayBinary_node = xml.find('intenArrayBinary').find('data')
             intensities_data = intenArrayBinary_node.text
             intensities_decoded = standard_b64decode(intensities_data)
-            intensities = unpack('<{0}f'.format(mz_count), intensities_decoded)
+            intensities = list(unpack('<{0}f'.format(mz_count), intensities_decoded))
 
             self.ms1_spectra.append(MS1Spectrum(id, mz_min, mz_max, rt, masses, intensities))
         else:
@@ -124,23 +124,32 @@ class MzData:
                 return
             mz_decoded = standard_b64decode(mz_data)
             mz_count = len(mz_decoded) // 8
-            masses = unpack('<{0}d'.format(mz_count), mz_decoded)
+            masses = list(unpack('<{0}d'.format(mz_count), mz_decoded))
 
             # load intensities
             intenArrayBinary_nodes = xml.find('intenArrayBinary').find('data')
             intensities_data = intenArrayBinary_nodes.text
             intensities_decoded = standard_b64decode(intensities_data)
-            intensities = unpack('<{0}f'.format(mz_count), intensities_decoded)
+            intensities = list(unpack('<{0}f'.format(mz_count), intensities_decoded))
 
-            # use only masses that are smaller than 1.00001 * mz?
-            # masses = []
-            # intensities = []
-            # for i in range(0, len(masses)):
-            #     if masses[i] < 1.00001 * mz:
-            #         masses.append(masses[i])
-            #         intensities.append(intensities[i])
+            # does spectrum with such mz exists?
+            spectrum_found = False
+            for spectrum in self.ms2_spectra:
+                if spectrum.mz == mz:
+                    # if spectrum already has CID with such energy, skip it
+                    if energy in spectrum.cids:
+                        continue
 
-            self.ms2_spectra.append(MS2Spectrum(id, mz, rt, energy, masses, intensities))
+                    # add CID
+                    spectrum.add_cid(id, energy, rt, masses, intensities)
+                    spectrum_found = True
+                    break
+
+            # construct new spectrum otherwise
+            if not spectrum_found:
+                new_spectrum = MS2Spectrum(mz)
+                new_spectrum.add_cid(id, energy, rt, masses, intensities)
+                self.ms2_spectra.append(new_spectrum)
 
     def __str__(self):
         return '\n'.join([

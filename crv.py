@@ -4,11 +4,15 @@ from datetime import datetime
 from os import listdir, makedirs
 from os.path import isfile, join, isdir
 
-from pandas import read_csv
+from pandas import DataFrame, read_csv
 
+from database import Database
+from experimental_compound import ExperimentalCompound
+from filters.cfmid_filter import CFMIDFilter
 from mz_data import MzData
+from parameters import Parameters
 from primary_compound_data import PrimaryCompoundData
-from utility import show_progress
+from utility import almost_equal, show_progress
 
 
 def load_compounds_list(file_name):
@@ -56,6 +60,19 @@ def get_compounds_list_file_name(database_folder_name, ask_user: bool):
     return file_name
 
 
+def create_session_folder(strain_name: str) -> str:
+    # TODO: remove strain_name parameter - all strains should use one session folder
+
+    session_root_folder = 'sessions'
+    time = datetime.now()
+    session_name = '{0}-{1}-{2}_{3}-{4}-{5}__{6}'.format(time.year, time.month, time.day, time.hour, time.minute,
+                                                         time.second, strain_name)
+    session_folder_name = join(session_root_folder, session_name)
+    makedirs(session_folder_name)
+
+    return session_folder_name
+
+
 def construct_database(strain_name: str, ask_user: bool = True, minimal_intensity: float = 0.0):
     database_root_folder = 'databases'
     database_name = select_database(database_root_folder, ask_user)
@@ -77,12 +94,7 @@ def construct_database(strain_name: str, ask_user: bool = True, minimal_intensit
         print('You can either provide proper energy files or delete them from compounds list.')
         exit()
 
-    session_root_folder = 'sessions'
-    time = datetime.now()
-    session_name = '{0}-{1}-{2}_{3}-{4}-{5}__{6}'.format(time.year, time.month, time.day, time.hour, time.minute,
-                                                         time.second, strain_name)
-    session_folder_name = join(session_root_folder, session_name)
-    makedirs(session_folder_name)
+    session_folder_name = create_session_folder(strain_name)
 
     msp_file_name = join(session_folder_name, 'energies.msp')
     if minimal_intensity != 0.0:
@@ -608,12 +620,215 @@ def folder_contains_strains(data_folder_name: str) -> bool:
     return True
 
 
+def is_ionization_possible(mass: float, mz_min: float, mz_max: float, ionization_cases: DataFrame) -> bool:
+    # at least one ionization case should provide mass that belongs to mz_min..mz_max range
+    for i in range(0, len(ionization_cases)):
+        delta_mass = ionization_cases['DeltaMass'][i]
+        new_mass = mass + delta_mass
+
+        if mz_min <= new_mass <= mz_max:
+            return True
+
+    # no such cases found
+    return False
+
+
+def find_corresponding_ms1_spectra(compounds: list, spectra: list, ionization_cases: DataFrame):
+    label = 'Finding corresponding MS1 spectra: '
+    progress = 0
+    show_progress(label, progress)
+
+    for compound in compounds:
+        for match in compound.matches:
+            # find spectrum with nearest RT
+            nearest_spectrum = None
+            nearest_spectrum_delta_rt = 10000
+
+            for i in range(0, len(spectra)):
+                spectrum = spectra[i]
+                delta_rt = abs(spectrum.rt - match.rt)
+                # ionization case with mass that belongs to spectrum mz range should exist
+                possible_ionization_found = is_ionization_possible(match.mass, spectrum.mz_min, spectrum.mz_max, ionization_cases)
+                if delta_rt < nearest_spectrum_delta_rt and possible_ionization_found:
+                    nearest_spectrum = spectrum
+                    nearest_spectrum_delta_rt = delta_rt
+
+            # if best delta RT is less then 0.35, store it
+            if nearest_spectrum_delta_rt <= 0.35:
+                match.ms1_spectrum = nearest_spectrum
+            else:
+                print()
+                print('========================')
+                print('Could not find MS1 spectrum for compound: {0}'.format(compound.name))
+                print('mass={0:.4f}, RT={1:6.3f}, precursor={2:.4f}'.format(match.mass, match.rt, match.precursor))
+                exit()
+
+        progress += 1
+        show_progress(label, progress / len(compounds))
+
+
+def find_corresponding_ms2_spectra(compounds: list, spectra: list):
+    label = 'Finding corresponding MS2 spectra: '
+    progress = 0
+    show_progress(label, progress)
+
+    for compound in compounds:
+        for match in compound.matches:
+            for spectrum in spectra:
+                # spectrum should have almost same mz as match's precursor
+                if almost_equal(match.precursor, spectrum.mz):
+                    # second check: RT for CID-10
+                    if almost_equal(match.rt, spectrum.cids['10'].rt, 0.35, False):
+                        match.ms2_spectra.append(spectrum)
+
+        progress += 1
+        show_progress(label, progress / len(compounds))
+
+
+def construct_experimental_compounds_list(mzdata_file_name: str, primary_compounds_data_file_name: str) -> list:
+    # load experimental data
+    mzdata = MzData()
+    mzdata.load(mzdata_file_name)
+    primary_compound_data = PrimaryCompoundData()
+    primary_compound_data.load(primary_compounds_data_file_name)
+
+    # load ionization cases
+    ionization_cases_file_name = 'ionization-cases-list.ssv'
+    ionization_cases = read_csv(ionization_cases_file_name, index_col=False, sep=';')
+    print()
+
+    # construct basic compounds list
+    compounds = construct_basic_compounds_list(primary_compound_data)
+
+    # look for duplicates
+    for compound in compounds:
+        if len(compound.matches) > 1:
+            print('Compound duplicates found: {0}'.format(compound.name))
+            for i in range(0, len(compound.matches)):
+                match = compound.matches[i]
+                print('{0}. mass={1:.4f}, RT={2:6.3f}, precursor={3:.4f}'.format(i + 1, match.mass, match.rt, match.precursor))
+            print()
+
+    # find corresponding MS1 and MS2 spectra
+    find_corresponding_ms1_spectra(compounds, mzdata.ms1_spectra, ionization_cases)
+    find_corresponding_ms2_spectra(compounds, mzdata.ms2_spectra)
+
+    return compounds
+
+
+def construct_basic_compounds_list(primary_compound_data: PrimaryCompoundData) -> list:
+    label = 'Constructing basic compounds list: '
+    progress = 0
+    show_progress(label, progress)
+
+    compounds = []
+
+    for i in range(0, len(primary_compound_data.data)):
+        name = primary_compound_data.data['Name'][i]
+        mass = primary_compound_data.data['Mass'][i]
+        rt = primary_compound_data.data['RT'][i]
+        precursor = primary_compound_data.data['Precursor'][i]
+        area = primary_compound_data.data['Area'][i]
+        score = primary_compound_data.data['Score'][i]
+
+        # such name already exists?
+        compound_with_such_name_found = False
+        for compound in compounds:
+            if compound.name == name:
+                # add new match
+                compound_with_such_name_found = True
+                compound.add_match(mass, rt, precursor, area, score)
+                break
+        # construct new compound otherwise
+        if not compound_with_such_name_found:
+            compound = ExperimentalCompound(name)
+            compound.add_match(mass, rt, precursor, area, score)
+            compounds.append(compound)
+
+        progress += 1
+        show_progress(label, progress / len(primary_compound_data.data))
+
+    return compounds
+
+
+def get_mzdata_file_name(folder_name: str) -> str:
+    file_names =[f for f in listdir(folder_name) if '.mzdata.xml' in f]
+
+    # are there any?
+    if len(file_names) == 0:
+        print('===========================================')
+        print('No .mzdata files found in folder: {0}'.format(folder_name))
+        exit()
+
+    # should be only one
+    if len(file_names) > 1:
+        print('WARNING: more than one .mzdata file found in folder: {0}'.format(folder_name))
+        print('Getting first.')
+
+    # get first
+    file_name = file_names[0]
+    file_name = join(folder_name, file_name)
+
+    return file_name
+
+
+def get_primary_compound_data_file_name(folder_name: str) -> str:
+    file_names = [f for f in listdir(folder_name) if '.csv' in f and not '.fixed.csv' in f]
+
+    # are there any?
+    if len(file_names) == 0:
+        print('===========================================')
+        print('No .csv files found in folder: {0}'.format(folder_name))
+        exit()
+
+    # should be only one
+    if len(file_names) > 1:
+        print('WARNING: more than one .csv file found in folder: {0}'.format(folder_name))
+        print('Getting first.')
+
+    # get first
+    file_name = file_names[0]
+    file_name = join(folder_name, file_name)
+
+    return file_name
+
+
+def apply_filter(compounds: list, filter: CFMIDFilter, session_folder_name: str) -> list:
+    label = 'Applying filter (CFM-ID): '
+    progress = 0
+    show_progress(label, progress)
+
+    answers = []
+    for compound in compounds:
+        answers.append(filter.apply(compound, session_folder_name))
+
+        progress += 1
+        show_progress(label, progress / len(compounds))
+
+    return answers
+
+
 def process_single_strain(data_folder_name: str, ask_user: bool):
+    from sys import argv
+
     strain_name = data_folder_name.replace('\\', '/').split('/')[-1].replace(' ', '-')
     print('Processing strain: {0}'.format(strain_name))
+    print()
 
-    session_folder_name, candidates_list, candidates_file_name = construct_database(strain_name, ask_user, 0.0001)
+    # load database
+    parameters = Parameters.from_json_file(argv[1])
+    database = Database(parameters)
+    print()
 
+    # create folder for session
+    session_folder_name = create_session_folder(strain_name)
+
+    # construct filters
+    cfmid_filter = CFMIDFilter(database, session_folder_name)
+    # construct isotope filter here
+    print()
+
+    # construct list of sample names
     sample_folder_names = [f for f in listdir(data_folder_name) if isdir(join(data_folder_name, f))]
     print('Folders with sample data found:')
     for name in sample_folder_names:
@@ -621,121 +836,128 @@ def process_single_strain(data_folder_name: str, ask_user: bool):
 
     sample_records = []
 
+    # process samples
     makedirs(join(session_folder_name, 'results'))
     for sample_folder_name in sample_folder_names:
-        sample_record = {}
+        sample_record = dict()
         sample_record['name'] = sample_folder_name
 
         print('Processing sample: {0}'.format(sample_folder_name))
+        print()
+
+        # find folder with current sample data
         current_sample_data_folder_name = join(data_folder_name, sample_folder_name)
+
+        # prepare session folder
         current_sample_session_folder_name = join(session_folder_name, 'results', sample_folder_name)
         makedirs(current_sample_session_folder_name)
 
-        compounds_without_ms2_spectra_file_name = join(current_sample_session_folder_name,
-                                                       'compounds-without-ms2-spectra.ssv')
-        spectra_file_name = join(current_sample_session_folder_name, 'spectra.msp')
+        # find files with experimental data
+        xml_file_name = get_mzdata_file_name(current_sample_data_folder_name)
+        csv_file_name = get_primary_compound_data_file_name(current_sample_data_folder_name)
 
-        xml_file_name = [f for f in listdir(current_sample_data_folder_name) if '.mzdata.xml' in f][0]
-        xml_file_name = join(current_sample_data_folder_name, xml_file_name)
+        # construct list of experimental compounds
+        experimental_compounds = construct_experimental_compounds_list(xml_file_name, csv_file_name)
+        print()
 
-        all_compounds_file_name = [f for f in listdir(current_sample_data_folder_name) if '.csv' in f][0]
-        all_compounds_file_name = join(current_sample_data_folder_name, all_compounds_file_name)
+        # apply CFM-ID filter here
+        cfmid_answers = apply_filter(experimental_compounds, cfmid_filter, current_sample_session_folder_name)
+        print(cfmid_answers)
 
-        # remove_wrong_lines_from_file(all_compounds_file_name)
+        # apply isotope filter here
 
-        compounds_list = parse_sample_data(xml_file_name, all_compounds_file_name,
-                                           compounds_without_ms2_spectra_file_name, spectra_file_name,
-                                           candidates_list)
+        print('--------------------------------------------------------------------------------')
+        continue
 
-        # isotope analysis, motherfucker!
-        mzdata = MzData()
-        mzdata.load(xml_file_name)
-        primary_compound_data = PrimaryCompoundData()
-        primary_compound_data.load(all_compounds_file_name)
-
-        # construct list of compounds
-        compounds = []
-        for i in range(0, len(primary_compound_data.data)):
-            name = primary_compound_data.data['Name'][i]
-            precursor_like_mass = primary_compound_data.data['Mass'][i]
-            rt = primary_compound_data.data['RT'][i]
-            compounds.append({'name': name, 'mass': precursor_like_mass, 'rt': rt})
-
-        # load ionization cases
-        ionization_cases_list_file_name = 'ionization-cases-list.ssv'
-        ionization_cases_list = read_csv(ionization_cases_list_file_name, index_col=False, sep=';')
-
-        # construct list of precursors
-        for compound in compounds:
-            for ionization_index in range(0, len(ionization_cases_list)):
-                precursor_like_mass = compound['mass']
-                delta_mass = ionization_cases_list['DeltaMass'][ionization_index]
-                if not 'precursors' in compound:
-                    compound['precursors'] = []
-                compound['precursors'].append(precursor_like_mass + delta_mass)
-
-        # look for MS1 spectra with the same mass
-        for compound in compounds:
-            # find spectrum with nearest RT
-            nearest_spectrum_delta_rt = 10000
-            nearest_spectrum_index = -1
-            for spectrum_index in range(0, len(mzdata.ms1_spectra)):
-                spectrum = mzdata.ms1_spectra[spectrum_index]
-                delta_rt = abs(spectrum.rt - compound['rt'])
-                if delta_rt < nearest_spectrum_delta_rt:
-                    nearest_spectrum_delta_rt = delta_rt
-                    nearest_spectrum_index = spectrum_index
-
-            spectrum = mzdata.ms1_spectra[nearest_spectrum_index]
-
-            # go through precursors trying to find almost the same mass
-            for precursor_mass in compound['precursors'][::-1]:
-                for mass_index in range(0, len(spectrum.masses)):
-                    precursor_like_mass = spectrum.masses[mass_index]
-                    if abs(precursor_like_mass - precursor_mass) <= 5e-6 * precursor_mass:
-                        print('Precursor with almost same mass found:')
-                        print('Compound: {0}'.format(compound['name']))
-                        print('Precursor mass: {0}'.format(precursor_mass))
-                        print('Spectrum masses: {0}'.format(spectrum.masses))
-
-                        # find mass with maximal intensity
-                        maximal_intensity = 0
-                        maximal_intensity_mass = None
-                        for i in range(0, len(spectrum.masses)):
-                            precursor_like_mass = spectrum.masses[i]
-                            intensity = spectrum.intensities[i]
-                            if intensity > maximal_intensity:
-                                maximal_intensity = intensity
-                                maximal_intensity_mass = precursor_like_mass
-                        print('Mass with maximal intensity: {0} ({1})'.format(maximal_intensity_mass, maximal_intensity))
-
-                        # find intensity for precursor-like mass
-                        precursor_like_mass_intensity = spectrum.intensities[mass_index]
-                        print('Precursor-like mass: {0} ({1})'.format(precursor_like_mass, precursor_like_mass_intensity))
-
-                        # find M+1
-                        m_plus_1_mass = precursor_mass + 1.0009
-                        print('M+1: {0}'.format(m_plus_1_mass))
-                        for i in range(0, len(spectrum.masses)):
-                            m_plus_1_like_mass = spectrum.masses[i]
-                            if abs(m_plus_1_like_mass - m_plus_1_mass) <= 10e-6 * m_plus_1_mass:
-                                m_plus_1_like_mass_intensity = spectrum.intensities[i]
-                                print('M+1-like mass: {0} ({1})'.format(m_plus_1_like_mass, m_plus_1_like_mass_intensity))
-
-                        # find M+2
-                        m_plus_2_mass = precursor_mass + 1.0009 * 2
-                        print('M+2: {0}'.format(m_plus_2_mass))
-                        for i in range(0, len(spectrum.masses)):
-                            m_plus_2_like_mass = spectrum.masses[i]
-                            if abs(m_plus_2_like_mass - m_plus_2_mass) <= 10e-6 * m_plus_2_mass:
-                                m_plus_2_like_mass_intensity = spectrum.intensities[i]
-                                print('M+2-like mass: {0} ({1})'.format(m_plus_2_like_mass, m_plus_2_like_mass_intensity))
-
-                        print()
-                        break
-
-        cfm_answers = receive_cfm_answers(compounds_list, candidates_list, candidates_file_name, spectra_file_name)
-        print(cfm_answers)
+        # # isotope analysis, motherfucker!
+        # mzdata = MzData()
+        # mzdata.load(xml_file_name)
+        # primary_compound_data = PrimaryCompoundData()
+        # primary_compound_data.load(all_compounds_file_name)
+        #
+        # # construct list of compounds
+        # compounds = []
+        # for i in range(0, len(primary_compound_data.data)):
+        #     name = primary_compound_data.data['Name'][i]
+        #     precursor_like_mass = primary_compound_data.data['Mass'][i]
+        #     rt = primary_compound_data.data['RT'][i]
+        #     compounds.append({'name': name, 'mass': precursor_like_mass, 'rt': rt})
+        #
+        # # load ionization cases
+        # ionization_cases_list_file_name = 'ionization-cases-list.ssv'
+        # ionization_cases_list = read_csv(ionization_cases_list_file_name, index_col=False, sep=';')
+        #
+        # # construct list of precursors
+        # for compound in compounds:
+        #     for ionization_index in range(0, len(ionization_cases_list)):
+        #         precursor_like_mass = compound['mass']
+        #         delta_mass = ionization_cases_list['DeltaMass'][ionization_index]
+        #         if not 'precursors' in compound:
+        #             compound['precursors'] = []
+        #         compound['precursors'].append(precursor_like_mass + delta_mass)
+        #
+        # # look for MS1 spectra with the same mass
+        # for compound in compounds:
+        #     # find spectrum with nearest RT
+        #     nearest_spectrum_delta_rt = 10000
+        #     nearest_spectrum_index = -1
+        #     for spectrum_index in range(0, len(mzdata.ms1_spectra)):
+        #         spectrum = mzdata.ms1_spectra[spectrum_index]
+        #         delta_rt = abs(spectrum.rt - compound['rt'])
+        #         if delta_rt < nearest_spectrum_delta_rt:
+        #             nearest_spectrum_delta_rt = delta_rt
+        #             nearest_spectrum_index = spectrum_index
+        #
+        #     spectrum = mzdata.ms1_spectra[nearest_spectrum_index]
+        #
+        #     # go through precursors trying to find almost the same mass
+        #     for precursor_mass in compound['precursors'][::-1]:
+        #         for mass_index in range(0, len(spectrum.masses)):
+        #             precursor_like_mass = spectrum.masses[mass_index]
+        #             if abs(precursor_like_mass - precursor_mass) <= 5e-6 * precursor_mass:
+        #                 print('Precursor with almost same mass found:')
+        #                 print('Compound: {0}'.format(compound['name']))
+        #                 print('Precursor mass: {0}'.format(precursor_mass))
+        #                 print('Spectrum masses: {0}'.format(spectrum.masses))
+        #
+        #                 # find mass with maximal intensity
+        #                 maximal_intensity = 0
+        #                 maximal_intensity_mass = None
+        #                 for i in range(0, len(spectrum.masses)):
+        #                     precursor_like_mass = spectrum.masses[i]
+        #                     intensity = spectrum.intensities[i]
+        #                     if intensity > maximal_intensity:
+        #                         maximal_intensity = intensity
+        #                         maximal_intensity_mass = precursor_like_mass
+        #                 print('Mass with maximal intensity: {0} ({1})'.format(maximal_intensity_mass, maximal_intensity))
+        #
+        #                 # find intensity for precursor-like mass
+        #                 precursor_like_mass_intensity = spectrum.intensities[mass_index]
+        #                 print('Precursor-like mass: {0} ({1})'.format(precursor_like_mass, precursor_like_mass_intensity))
+        #
+        #                 # find M+1
+        #                 m_plus_1_mass = precursor_mass + 1.0009
+        #                 print('M+1: {0}'.format(m_plus_1_mass))
+        #                 for i in range(0, len(spectrum.masses)):
+        #                     m_plus_1_like_mass = spectrum.masses[i]
+        #                     if abs(m_plus_1_like_mass - m_plus_1_mass) <= 10e-6 * m_plus_1_mass:
+        #                         m_plus_1_like_mass_intensity = spectrum.intensities[i]
+        #                         print('M+1-like mass: {0} ({1})'.format(m_plus_1_like_mass, m_plus_1_like_mass_intensity))
+        #
+        #                 # find M+2
+        #                 m_plus_2_mass = precursor_mass + 1.0009 * 2
+        #                 print('M+2: {0}'.format(m_plus_2_mass))
+        #                 for i in range(0, len(spectrum.masses)):
+        #                     m_plus_2_like_mass = spectrum.masses[i]
+        #                     if abs(m_plus_2_like_mass - m_plus_2_mass) <= 10e-6 * m_plus_2_mass:
+        #                         m_plus_2_like_mass_intensity = spectrum.intensities[i]
+        #                         print('M+2-like mass: {0} ({1})'.format(m_plus_2_like_mass, m_plus_2_like_mass_intensity))
+        #
+        #                 print()
+        #                 break
+        #
+        # cfm_answers = receive_cfm_answers(compounds_list, candidates_list, candidates_file_name, spectra_file_name)
+        # print(cfm_answers)
 
         approved_compounds_list_file_name = join(current_sample_session_folder_name, 'approved-compounds-list.ssv')
         sample_record['approved compounds parameters'] = write_approved_compounds_list(cfm_answers,
@@ -744,6 +966,7 @@ def process_single_strain(data_folder_name: str, ask_user: bool):
                                                                                        candidates_list)
         sample_records.append(sample_record)
         print('------------------------------')
+    exit()
 
     # process collected compounds parameters
 
