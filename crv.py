@@ -808,6 +808,91 @@ def apply_filter(compounds: list, filter: CFMIDFilter, session_folder_name: str)
     return answers
 
 
+def construct_compounds_without_ms2_spectra_list(compounds: list) -> list:
+    compounds_without_ms2_spectra = []
+
+    for compound in compounds:
+        # it's needed to have no MS2 spectra across all matches
+        ms2_spectra_presented = False
+        for match in compound.matches:
+            if len(match.ms2_spectra) != 0:
+                ms2_spectra_presented = True
+                break
+
+        # store compound if there are not MS2 spectra
+        if not ms2_spectra_presented:
+            compounds_without_ms2_spectra.append(compound)
+
+    return compounds_without_ms2_spectra
+
+
+def write_compounds_without_ms2_spectra_list(compounds: list, file_name: str):
+    file = open(file_name, 'w')
+    file.write('Compound;Mass;RT;Precursor;Area;Score\n')
+
+    for compound in compounds:
+        for match in compound.matches:
+            file.write('{0};{1};{2};{3};{4};{5}\n'.format(compound.name, match.mass, match.rt, match.precursor, match.area, match.score))
+    file.close()
+
+    print('Compounds without MS2 spectra list saved to {0}.'.format(file_name))
+
+
+def construct_approved_by_cfmid_compounds_list(compounds: list, answers: list) -> list:
+    label = 'Constructing approved compounds list (CFM-ID): '
+    progress = 0
+    show_progress(label, progress)
+
+    assert len(compounds) == len(answers)  # just be sure that everything is correct
+
+    approved_compounds = []
+    for compound_index in range(0, len(compounds)):
+        compound = compounds[compound_index]
+        answer = answers[compound_index]
+
+        # skip compounds without MS2 spectra
+        if len(answer.spectrum_answers) == 0:
+            progress += 1
+            show_progress(label, progress / len(compounds))
+            continue
+
+        # find spectrum with highest score
+        highest_score = 0
+        best_spectrum_answer = None
+        for spectrum_answer in answer.spectrum_answers:
+            if spectrum_answer.score > highest_score:
+                highest_score = spectrum_answer.score
+                best_spectrum_answer = spectrum_answer
+        if best_spectrum_answer is None:
+            print()
+            print('=====================================')
+            print('Something wrong with CFM-ID answers for compound: {0}'.format(answer.name))
+            print('There are no spectrum answers with score higher than 0.')
+            exit()
+
+        # TODO: place here check for score to be not lower than minimal acceptable score (e.g. 0.4)
+
+        # construct approved compound and store it
+        approved_compound = CFMIDFilter.ApprovedCompound(best_spectrum_answer, compound)
+        approved_compounds.append(approved_compound)
+
+        progress += 1
+        show_progress(label, progress / len(compounds))
+
+    return approved_compounds
+
+
+def write_approved_by_cfmid_compounds_list(compounds: list, file_name: str):
+    file = open(file_name, 'w')
+    file.write('Compound;Mass;RT;Precursor;Area;Score;CFM-ID score;Best alternative;Best alternative CFM-ID score\n')
+
+    for compound in compounds:
+        file.write('{0};{1};{2};{3};{4};{5};{6};{7};{8}\n'.format(compound.name, compound.mass, compound.rt, compound.precursor, compound.area, compound.score, compound.cfmid_score, compound.best_alternative_name, compound.best_alternative_score))
+    file.close()
+
+    print('Approved compounds list (CFM-ID) saved to {0}.'.format(file_name))
+
+
 def process_single_strain(data_folder_name: str, ask_user: bool):
     from sys import argv
 
@@ -839,8 +924,8 @@ def process_single_strain(data_folder_name: str, ask_user: bool):
     # process samples
     makedirs(join(session_folder_name, 'results'))
     for sample_folder_name in sample_folder_names:
-        sample_record = dict()
-        sample_record['name'] = sample_folder_name
+        # sample_record = dict()
+        # sample_record['name'] = sample_folder_name
 
         print('Processing sample: {0}'.format(sample_folder_name))
         print()
@@ -860,11 +945,21 @@ def process_single_strain(data_folder_name: str, ask_user: bool):
         experimental_compounds = construct_experimental_compounds_list(xml_file_name, csv_file_name)
         print()
 
+        # write compounds without MS2 spectra list
+        compounds_without_ms2_spectra = construct_compounds_without_ms2_spectra_list(experimental_compounds)
+        print('Compounds without MS2 spectra: {0}'.format(len(compounds_without_ms2_spectra)))
+        compounds_without_ms2_spectra_file_name = join(current_sample_session_folder_name, 'compounds-without-ms2-spectra.ssv')
+        write_compounds_without_ms2_spectra_list(compounds_without_ms2_spectra, compounds_without_ms2_spectra_file_name)
+
         # apply CFM-ID filter here
         cfmid_answers = apply_filter(experimental_compounds, cfmid_filter, current_sample_session_folder_name)
-        print(cfmid_answers)
 
         # apply isotope filter here
+
+        # write approved compounds list
+        approved_by_cfmid_compounds = construct_approved_by_cfmid_compounds_list(experimental_compounds, cfmid_answers)
+        approved_compounds_file_name = join(current_sample_session_folder_name, 'approved-compounds.ssv')
+        write_approved_by_cfmid_compounds_list(approved_by_cfmid_compounds, approved_compounds_file_name)
 
         print('--------------------------------------------------------------------------------')
         continue
@@ -958,14 +1053,14 @@ def process_single_strain(data_folder_name: str, ask_user: bool):
         #
         # cfm_answers = receive_cfm_answers(compounds_list, candidates_list, candidates_file_name, spectra_file_name)
         # print(cfm_answers)
-
-        approved_compounds_list_file_name = join(current_sample_session_folder_name, 'approved-compounds-list.ssv')
-        sample_record['approved compounds parameters'] = write_approved_compounds_list(cfm_answers,
-                                                                                       approved_compounds_list_file_name,
-                                                                                       compounds_list,
-                                                                                       candidates_list)
-        sample_records.append(sample_record)
-        print('------------------------------')
+        #
+        # approved_compounds_list_file_name = join(current_sample_session_folder_name, 'approved-compounds-list.ssv')
+        # sample_record['approved compounds parameters'] = write_approved_compounds_list(cfm_answers,
+        #                                                                                approved_compounds_list_file_name,
+        #                                                                                compounds_list,
+        #                                                                                candidates_list)
+        # sample_records.append(sample_record)
+        # print('------------------------------')
     exit()
 
     # process collected compounds parameters

@@ -35,6 +35,20 @@ class CFMIDFilter:
         def __repr__(self):
             return self.__str__()
 
+    class ApprovedCompound:
+        def __init__(self, spectrum_answer, compound: ExperimentalCompound):
+            self.name = compound.name
+            self.cfmid_score = spectrum_answer.score
+            self.best_alternative_name = spectrum_answer.best_alternative_name
+            self.best_alternative_score = spectrum_answer.best_alternative_score
+
+            match = compound.matches[spectrum_answer.match_index]
+            self.mass = match.mass
+            self.rt = match.rt
+            self.precursor = match.precursor
+            self.area = match.area
+            self.score = match.score
+
     def __init__(self, database: Database, session_folder_name: str):
         print('Constructing filter: CFM-ID')
 
