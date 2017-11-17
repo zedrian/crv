@@ -10,14 +10,15 @@ from crv.utility import show_progress
 class CFMIDFilter:
     class Answer:
         class SpectrumAnswer:
-            def __init__(self, match_index: int, score: float, best_alternative_name: str, best_alternative_score: float):
+            def __init__(self, id: str, match_index: int, score: float, best_alternative_name: str, best_alternative_score: float):
+                self.id = id
                 self.match_index = match_index
                 self.score = score
                 self.best_alternative_name = best_alternative_name
                 self.best_alternative_score = best_alternative_score
 
             def __str__(self):
-                return 'Spectrum answer (match index={0}, score={1}, best alternative=\'{2}\', best alternative score={3})'.format(self.match_index, self.score, self.best_alternative_name, self.best_alternative_score)
+                return 'Spectrum answer (id={0}, match index={1}, score={2}, best alternative=\'{3}\', best alternative score={4})'.format(self.id, self.match_index, self.score, self.best_alternative_name, self.best_alternative_score)
 
             def __repr__(self):
                 return self.__str__()
@@ -26,8 +27,8 @@ class CFMIDFilter:
             self.name = name
             self.spectrum_answers = []
 
-        def add_spectrum_answer(self, match_index: int, score: float, best_alternative_name: str, best_alternative_score: float):
-            self.spectrum_answers.append(CFMIDFilter.Answer.SpectrumAnswer(match_index, score, best_alternative_name, best_alternative_score))
+        def add_spectrum_answer(self, id: str, match_index: int, score: float, best_alternative_name: str, best_alternative_score: float):
+            self.spectrum_answers.append(CFMIDFilter.Answer.SpectrumAnswer(id, match_index, score, best_alternative_name, best_alternative_score))
 
         def __str__(self):
             return 'Answer (compound=\'{0}\', spectrum answers={1})'.format(self.name, self.spectrum_answers)
@@ -103,6 +104,15 @@ class CFMIDFilter:
 
                 # process output
                 lines = output.decode('utf-8').split('\n')
+                # is it correct?
+                if len(lines) == 1:
+                    print()
+                    print('=======================================================')
+                    print('Something got wrong when calling CFM-ID.')
+                    print('Command: {0}'.format(current_command))
+                    print('Response: {0}'.format(lines[0]))
+                    exit()
+
                 # find line with first candidate
                 first_candidate_line_index = None
                 for i in range(0, len(lines)):
@@ -118,7 +128,7 @@ class CFMIDFilter:
                 if candidate_name == compound.name:
                     # best alternative is second candidate
                     best_alternative_name, best_alternative_score = process_candidate_line(lines[1])
-                    answer.add_spectrum_answer(match_index, candidate_score, best_alternative_name,
+                    answer.add_spectrum_answer(id, match_index, candidate_score, best_alternative_name,
                                                best_alternative_score)
                 else:
                     # best alternative is first candidate
@@ -131,7 +141,7 @@ class CFMIDFilter:
                         candidate_name, candidate_score = process_candidate_line(line)
                         if candidate_name == compound.name:
                             target_compound_found = True
-                            answer.add_spectrum_answer(match_index, candidate_score, best_alternative_name,
+                            answer.add_spectrum_answer(id, match_index, candidate_score, best_alternative_name,
                                                        best_alternative_score)
                             break
 

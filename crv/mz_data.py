@@ -97,6 +97,10 @@ class MzData:
 
             # load mz and energy level
             precursorList_node = xml.find('spectrumDesc').find('precursorList')
+            if precursorList_node is None:
+                print('WARNING: corrupted spectrum node without precursorList found: {0}'.format(id))
+                return
+
             precursor_nodes = precursorList_node.findall('precursor')
             if len(precursor_nodes) > 1:
                 print('WARNING: MS2 spectrum with {0} precursors found: {1}'.format(len(precursor_nodes), id))

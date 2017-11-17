@@ -860,15 +860,9 @@ def construct_approved_by_cfmid_compounds_list(compounds: list, answers: list) -
         highest_score = 0
         best_spectrum_answer = None
         for spectrum_answer in answer.spectrum_answers:
-            if spectrum_answer.score > highest_score:
+            if spectrum_answer.score >= highest_score:
                 highest_score = spectrum_answer.score
                 best_spectrum_answer = spectrum_answer
-        if best_spectrum_answer is None:
-            print()
-            print('=====================================')
-            print('Something wrong with CFM-ID answers for compound: {0}'.format(answer.name))
-            print('There are no spectrum answers with score higher than 0.')
-            exit()
 
         # TODO: place here check for score to be not lower than minimal acceptable score (e.g. 0.4)
 
@@ -953,6 +947,10 @@ def process_single_strain(data_folder_name: str, ask_user: bool):
 
         # apply CFM-ID filter here
         cfmid_answers = apply_filter(experimental_compounds, cfmid_filter, current_sample_session_folder_name)
+        print()
+        for answer in cfmid_answers:
+            print(answer)
+        print()
 
         # apply isotope filter here
 
@@ -1061,7 +1059,7 @@ def process_single_strain(data_folder_name: str, ask_user: bool):
         #                                                                                candidates_list)
         # sample_records.append(sample_record)
         # print('------------------------------')
-    exit()
+    return
 
     # process collected compounds parameters
 
