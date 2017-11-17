@@ -105,12 +105,13 @@ class CFMIDFilter:
                 # process output
                 lines = output.decode('utf-8').split('\n')
                 # is it correct?
-                if len(lines) == 1:
+                if len(lines) <= 3:
                     print()
                     print('=======================================================')
                     print('Something got wrong when calling CFM-ID.')
                     print('Command: {0}'.format(current_command))
-                    print('Response: {0}'.format(lines[0]))
+                    print('Response:')
+                    print(lines)
                     exit()
 
                 # find line with first candidate
